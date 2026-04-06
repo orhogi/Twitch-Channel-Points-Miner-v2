@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+"""
+Twitch Channel Points Miner with Rich Discord Embeds
+Enhanced webhook notifications with detailed information and beautiful formatting
+"""
 
 import logging
 from colorama import Fore
@@ -15,10 +19,127 @@ from TwitchChannelPointsMiner.classes.Settings import Priority, Events, Follower
 from TwitchChannelPointsMiner.classes.entities.Bet import Strategy, BetSettings, Condition, OutcomeKeys, FilterCondition, DelayMode
 from TwitchChannelPointsMiner.classes.entities.Streamer import Streamer, StreamerSettings
 
+from datetime import datetime, timezone
+import re
+import requests
+
+# Custom Discord Wrapper with Rich Embeds
+class RichDiscord(Discord):
+    """Enhanced Discord class that automatically adds rich embeds to notifications"""
+
+    def send(self, message: str, event: Events, embed: dict = None) -> None:
+        """Override send to automatically create rich embeds based on event type"""
+        if str(event) not in self.events:
+            return
+
+        if embed is None:
+            # Auto-generate embed based on event type and message
+            embed = self._create_embed_from_message(message, event)
+
+        # Send only the embed, no text content
+        payload = {
+            "username": "Twitch Channel Points Miner",
+            "avatar_url": "https://i.imgur.com/X9fEkhT.png",
+            "embeds": [embed]
+        }
+
+        import requests
+        requests.post(
+            url=self.webhook_api,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+
+    def _create_embed_from_message(self, message: str, event: Events) -> dict:
+        """Parse message and create appropriate embed"""
+        event_str = str(event)
+
+        if event_str == "STREAMER_ONLINE":
+            return self._parse_streamer_online(message)
+        elif event_str == "STREAMER_OFFLINE":
+            return self._parse_streamer_offline(message)
+        elif event_str == "BET_WIN":
+            return self._parse_bet_win(message)
+        elif event_str == "BET_LOSE":
+            return self._parse_bet_lose(message)
+        elif event_str == "CHAT_MENTION":
+            return self._parse_chat_mention(message)
+        elif event_str == "DROP_CLAIM":
+            return self._parse_drop_claim(message)
+        else:
+            # Generic embed for other events
+            return self._create_generic_embed(message, event_str)
+
+    def _parse_streamer_online(self, message: str) -> dict:
+        """Parse 'Streamer is Online!' message"""
+        # Match format: Streamer(username=aspen, ...) is Online!
+        match = re.search(r'username=([^,\)]+)', message)
+        streamer_name = match.group(1) if match else "Unknown"
+
+        return {
+            "description": f"🟢 **{streamer_name}** is now live",
+            "color": 0x00ff00,
+            "thumbnail": {"url": f"https://static-cdn.jtvnw.net/jtv_user_pictures/{streamer_name.lower()}-profile_image-300x300.png"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _parse_streamer_offline(self, message: str) -> dict:
+        """Parse 'Streamer is Offline!' message"""
+        # Match format: Streamer(username=aspen, ...) is Offline!
+        match = re.search(r'username=([^,\)]+)', message)
+        streamer_name = match.group(1) if match else "Unknown"
+
+        return {
+            "description": f"🔴 **{streamer_name}** went offline",
+            "color": 0xff0000,
+            "thumbnail": {"url": f"https://static-cdn.jtvnw.net/jtv_user_pictures/{streamer_name.lower()}-profile_image-300x300.png"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _parse_bet_win(self, message: str) -> dict:
+        """Parse bet win message"""
+        return {
+            "description": f"🎉 {message}",
+            "color": 0xffd700,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _parse_bet_lose(self, message: str) -> dict:
+        """Parse bet lose message"""
+        return {
+            "description": f"😢 {message}",
+            "color": 0xff4444,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _parse_chat_mention(self, message: str) -> dict:
+        """Parse chat mention message"""
+        return {
+            "description": f"💬 {message}",
+            "color": 0x9146ff,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _parse_drop_claim(self, message: str) -> dict:
+        """Parse drop claim message"""
+        return {
+            "description": f"🎁 {message}",
+            "color": 0x00d9ff,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _create_generic_embed(self, message: str, event_type: str) -> dict:
+        """Create a generic embed for unhandled events"""
+        return {
+            "description": f"📢 {message}",
+            "color": 0x9146ff,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
 twitch_miner = TwitchChannelPointsMiner(
-    username="your-twitch-username",
-    password="write-your-secure-psw",           # If no password will be provided, the script will ask interactively
-    claim_drops_startup=False,                  # If you want to auto claim all drops from Twitch inventory on the startup
+    username="YOUR USERNAME",
+    password="YOUR PASS",           # If no password will be provided, the script will ask interactively
+    claim_drops_startup=True,                  # If you want to auto claim all drops from Twitch inventory on the startup
     priority=[                                  # Custom priority in this case for example:
         Priority.STREAK,                        # - We want first of all to catch all watch streak from all streamers
         Priority.DROPS,                         # - When we don't have anymore watch streak to catch, wait until all drops are collected over the streamers
@@ -26,7 +147,7 @@ twitch_miner = TwitchChannelPointsMiner(
     ],
     enable_analytics=False,                     # Disables Analytics if False. Disabling it significantly reduces memory consumption
     disable_ssl_cert_verification=False,        # Set to True at your own risk and only to fix SSL: CERTIFICATE_VERIFY_FAILED error
-    disable_at_in_nickname=False,               # Set to True if you want to check for your nickname mentions in the chat even without @ sign
+    disable_at_in_nickname=True,               # Set to True if you want to check for your nickname mentions in the chat even without @ sign
     logger_settings=LoggerSettings(
         save=True,                              # If you want to save logs in a file (suggested)
         console_level=logging.INFO,             # Level of logs - use logging.DEBUG for more info
@@ -49,10 +170,16 @@ twitch_miner = TwitchChannelPointsMiner(
                     Events.BET_LOSE, Events.CHAT_MENTION],                          # Only these events will be sent to the chat
             disable_notification=True,                                              # Revoke the notification (sound/vibration)
         ),
-        discord=Discord(
-            webhook_api="https://discord.com/api/webhooks/0123456789/0a1B2c3D4e5F6g7H8i9J",  # Discord Webhook URL
-            events=[Events.STREAMER_ONLINE, Events.STREAMER_OFFLINE,
-                    Events.BET_LOSE, Events.CHAT_MENTION],                                  # Only these events will be sent to the chat
+        discord=RichDiscord(
+            webhook_api="",  # Discord Webhook URL
+            events=[
+                Events.STREAMER_ONLINE,      # When streamer goes live
+                Events.STREAMER_OFFLINE,     # When streamer goes offline
+                Events.BET_WIN,              # When you win a bet
+                Events.BET_LOSE,             # When you lose a bet
+                Events.CHAT_MENTION,         # When mentioned in chat
+                Events.DROP_CLAIM,           # When a drop is claimed
+            ],
         ),
         webhook=Webhook(
             endpoint="https://example.com/webhook",                                                                    # Webhook URL
@@ -78,7 +205,7 @@ twitch_miner = TwitchChannelPointsMiner(
             endpoint="https://example.com/message?token=TOKEN",
             priority=8,
             events=[Events.STREAMER_ONLINE, Events.STREAMER_OFFLINE,
-                    Events.BET_LOSE, Events.CHAT_MENTION], 
+                    Events.BET_LOSE, Events.CHAT_MENTION],
         )
     ),
     streamer_settings=StreamerSettings(
@@ -87,7 +214,7 @@ twitch_miner = TwitchChannelPointsMiner(
         claim_drops=True,                       # We can't filter rewards base on stream. Set to False for skip viewing counter increase and you will never obtain a drop reward from this script. Issue #21
         claim_moments=True,                     # If set to True, https://help.twitch.tv/s/article/moments will be claimed when available
         watch_streak=True,                      # If a streamer go online change the priority of streamers array and catch the watch screak. Issue #11
-        community_goals=False,                  # If True, contributes the max channel points per stream to the streamers' community challenge goals
+        community_goals=True,                  # If True, contributes the max channel points per stream to the streamers' community challenge goals
         chat=ChatPresence.ONLINE,               # Join irc chat to increase watch-time [ALWAYS, NEVER, ONLINE, OFFLINE]
         bet=BetSettings(
             strategy=Strategy.SMART,            # Choose you strategy!
@@ -119,12 +246,10 @@ twitch_miner = TwitchChannelPointsMiner(
 
 twitch_miner.mine(
     [
-       Streamer("thatgirlgatto", settings=StreamerSettings(make_predictions=True  , follow_raid=True , claim_drops=True  , watch_streak=True , bet=BetSettings(strategy=Strategy.SMART      , percentage=5 , stealth_mode=True,  percentage_gap=20 , max_points=234   , filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS,      where=Condition.LTE, value=800 ) ) )),
-      Streamer("aspen", settings=StreamerSettings(make_predictions=True  , follow_raid=True , claim_drops=True  , watch_streak=True , bet=BetSettings(strategy=Strategy.SMART      , percentage=5 , stealth_mode=True,  percentage_gap=20 , max_points=234   , filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS,      where=Condition.LTE, value=800 ) ) )),
-      Streamer("pokimane", settings=StreamerSettings(make_predictions=True  , follow_raid=True , claim_drops=True  , watch_streak=True , bet=BetSettings(strategy=Strategy.SMART      , percentage=5 , stealth_mode=True,  percentage_gap=20 , max_points=234   , filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS,      where=Condition.LTE, value=800 ) ) )),
-      Streamer("deku", settings=StreamerSettings(make_predictions=True  , follow_raid=True , claim_drops=True  , watch_streak=True , bet=BetSettings(strategy=Strategy.SMART      , percentage=5 , stealth_mode=True,  percentage_gap=20 , max_points=234   , filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS,      where=Condition.LTE, value=800 ) ) )),
-      Streamer("cherrycrushtv", settings=StreamerSettings(make_predictions=True  , follow_raid=True , claim_drops=True  , watch_streak=True , bet=BetSettings(strategy=Strategy.SMART      , percentage=5 , stealth_mode=True,  percentage_gap=20 , max_points=234   , filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS,      where=Condition.LTE, value=800 ) ) ))
-    ],                                  # Array of streamers (order = priority)
+      Streamer("", settings=StreamerSettings(make_predictions=True, follow_raid=True, claim_drops=True, watch_streak=True, bet=BetSettings(strategy=Strategy.SMART, percentage=5, stealth_mode=True, percentage_gap=20, max_points=234, filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS, where=Condition.LTE, value=800)))),
+      Streamer("", settings=StreamerSettings(make_predictions=True, follow_raid=True, claim_drops=True, watch_streak=True, bet=BetSettings(strategy=Strategy.SMART, percentage=5, stealth_mode=True, percentage_gap=20, max_points=234, filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS, where=Condition.LTE, value=800)))),
+      Streamer("", settings=StreamerSettings(make_predictions=True, follow_raid=True, claim_drops=True, watch_streak=True, bet=BetSettings(strategy=Strategy.SMART, percentage=5, stealth_mode=True, percentage_gap=20, max_points=234, filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS, where=Condition.LTE, value=800)))),
+      Streamer("", settings=StreamerSettings(make_predictions=True, follow_raid=True, claim_drops=True, watch_streak=True, bet=BetSettings(strategy=Strategy.SMART, percentage=5, stealth_mode=True, percentage_gap=20, max_points=234, filter_condition=FilterCondition(by=OutcomeKeys.TOTAL_USERS, where=Condition.LTE, value=800)))),
     ],                                  # Array of streamers (order = priority)
     followers=False,                    # Automatic download the list of your followers
     followers_order=FollowersOrder.ASC  # Sort the followers list by follow date. ASC or DESC
